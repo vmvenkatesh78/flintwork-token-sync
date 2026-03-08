@@ -24,7 +24,7 @@ export interface SemanticToken {
   /** Reference to a global token, e.g. "{color.gray.900}" */
   reference: string;
   /** Which theme this token belongs to */
-  theme: 'light' | 'dark';
+  theme: 'light' | 'dark' | 'typography';
   status: 'synced' | 'modified' | 'error';
 }
 

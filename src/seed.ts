@@ -222,8 +222,7 @@ async function seedSemanticTokens(): Promise<number> {
 
   for (const file of files) {
     const name = basename(file, '.json');
-    // typography.json is not a theme file — skip it for semantic seeding
-    if (name !== 'light' && name !== 'dark') continue;
+    // name is "light", "dark", or "typography"
 
     const filePath = join(semanticDir, file);
     const json = readJsonFile(filePath);

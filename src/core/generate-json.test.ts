@@ -166,6 +166,38 @@ describe('semantic token generation', () => {
     expect(existsSync(join(testDir, 'semantic/dark.json'))).toBe(true);
   });
 
+  it('creates typography.json for typography theme tokens', () => {
+    const result = generateTokenFiles(
+      [],
+      [
+        makeSemantic({ name: 'fontFamily.sans', reference: 'Inter, system-ui, sans-serif', theme: 'typography' }),
+        makeSemantic({ name: 'fontSize.sm', reference: '14px', theme: 'typography' }),
+      ],
+      [],
+      testDir,
+    );
+
+    expect(existsSync(join(testDir, 'semantic/typography.json'))).toBe(true);
+    const json = readGeneratedJson('semantic/typography.json');
+    const fontFamily = json['fontFamily'] as Record<string, unknown>;
+    expect(fontFamily['sans']).toEqual({ $value: 'Inter, system-ui, sans-serif' });
+  });
+
+  it('creates all three semantic files when all themes present', () => {
+    const result = generateTokenFiles(
+      [],
+      [
+        makeSemantic({ name: 'color.text.primary', reference: '{color.gray.900}', theme: 'light' }),
+        makeSemantic({ name: 'color.text.primary', reference: '{color.gray.50}', theme: 'dark' }),
+        makeSemantic({ name: 'fontSize.sm', reference: '14px', theme: 'typography' }),
+      ],
+      [],
+      testDir,
+    );
+
+    expect(result.semanticFiles).toBe(3);
+  });
+
   it('stores references as string values', () => {
     generateTokenFiles(
       [],

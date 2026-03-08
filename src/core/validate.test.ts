@@ -308,6 +308,20 @@ describe('reference validation', () => {
     );
     expect(result.valid).toBe(true);
   });
+
+  it('accepts typography semantic tokens with raw values (not references)', () => {
+    const result = validateTokens(
+      [],
+      [
+        makeSemantic({ name: 'fontFamily.sans', reference: 'Inter, system-ui, sans-serif', theme: 'typography' }),
+        makeSemantic({ name: 'fontSize.sm', reference: '14px', theme: 'typography' }),
+        makeSemantic({ name: 'fontWeight.medium', reference: '500', theme: 'typography' }),
+        makeSemantic({ name: 'lineHeight.normal', reference: '1.5', theme: 'typography' }),
+      ],
+      [],
+    );
+    expect(result.valid).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
