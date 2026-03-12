@@ -82,7 +82,7 @@ A designer changing the button's primary color edits `button.primary.bg` — the
 
 When someone runs `npm run cli sync` or Claude calls the `sync_tokens` MCP tool, here's exactly what happens:
 
-**Step 1: Read from Notion.** The tool connects to Notion using the API token from `.env`. It queries all three databases using pagination (100 rows at a time) until every row is read. Each row becomes a typed object — `GlobalToken`, `SemanticToken`, or `ComponentToken` — with the Notion page ID preserved for write-back.
+**Step 1: Read from Notion.** The tool connects to Notion using the API token from `.env`. It queries all four databases using pagination (100 rows at a time) until every row is read. Each row becomes a typed object — `GlobalToken`, `SemanticToken`, or `ComponentToken` — with the Notion page ID preserved for write-back.
 
 **Step 2: Validate.** Every token passes through validation checks:
 
@@ -116,7 +116,7 @@ Files are written to flintwork's `src/tokens/` directory, organized into `global
 - Last Synced → current timestamp
 - Error → cleared
 
-This is done sequentially with a 350ms delay between rows to respect Notion's rate limit of ~3 requests per second. However, the sync is optimized: it only updates rows whose status actually changed. If a designer modifies one token, only that one row gets written back — not all 217. On the first sync after seeding (when all rows are already "synced"), zero writes happen. This optimization is critical for the MCP server, where tool calls have a timeout — writing all 217 rows would take ~76 seconds and exceed the limit.
+This is done sequentially with a 350ms delay between rows to respect Notion's rate limit of ~3 requests per second. However, the sync is optimized: it only updates rows whose status actually changed. If a designer modifies one token, only that one row gets written back — not all 253. On the first sync after seeding (when all rows are already "synced"), zero writes happen. This optimization is critical for the MCP server, where tool calls have a timeout — writing all 253 rows would take ~76 seconds and exceed the limit.
 
 ---
 
@@ -134,12 +134,13 @@ Claude Desktop
     └── flintwork-token-sync MCP (local) — this server
 ```
 
-Four tools are available:
+Five tools are available:
 
 | Tool | What it does | When to use |
 |---|---|---|
-| `sync_tokens` | Full pipeline: read → validate → generate → build → write status | "Sync my design tokens" |
+| `sync_tokens` | Full pipeline: read → validate → generate → build → write status + build log | "Sync my design tokens" |
 | `validate_tokens` | Read and validate only | "Check if my tokens have any errors" |
+| `diff_tokens` | Compare Notion state against JSON on disk | "What changed since last sync?" |
 | `build_tokens` | Run the build on existing JSON files | "Rebuild the CSS from current JSON files" |
 | `get_token_summary` | Read current state from Notion | "What's the status of my tokens?" |
 
@@ -152,6 +153,7 @@ The standalone interface. Run directly from the terminal without an AI agent.
 ```bash
 npm run cli sync       # Full pipeline
 npm run cli validate   # Validate only
+npm run cli diff       # Preview what would change
 npm run cli build      # Build only
 ```
 
@@ -168,16 +170,20 @@ flintwork-token-sync/
 │   │   ├── types.ts               ← All TypeScript types (tokens, results, config)
 │   │   ├── notion-client.ts       ← Notion read/write via @notionhq/client
 │   │   ├── validate.ts            ← Token validation (hex, refs, circular, names)
-│   │   ├── validate.test.ts       ← 22 tests for validation
+│   │   ├── validate.test.ts       ← 23 tests for validation
 │   │   ├── generate-json.ts       ← Notion data → flintwork JSON files
-│   │   ├── generate-json.test.ts  ← 8 tests for JSON generation
+│   │   ├── generate-json.test.ts  ← 11 tests for JSON generation
+│   │   ├── diff.ts                ← Compare Notion state against JSON on disk
+│   │   ├── diff.test.ts           ← 15 tests for diff
 │   │   ├── build.ts               ← Runs flintwork's build-tokens.ts
+│   │   ├── build-log.ts           ← Writes audit entries to Build Log database
 │   │   └── sync.ts                ← Orchestrator — single source of truth for the pipeline
 │   ├── mcp-server/
-│   │   └── server.ts              ← MCP tool definitions (thin wrappers around core/)
+│   │   └── server.ts              ← 5 MCP tool definitions (thin wrappers around core/)
 │   ├── index.ts                   ← MCP server entry point
 │   ├── cli.ts                     ← CLI entry point (thin wrapper around core/)
-│   └── seed.ts                    ← Populates Notion from existing JSON files
+│   ├── seed.ts                    ← Populates Notion from existing JSON files
+│   └── seed-typography.ts         ← Seeds typography semantic tokens specifically
 ├── docs/
 │   └── decisions/
 │       └── decisions.md           ← Architecture Decision Records
@@ -220,7 +226,7 @@ Copy the integration token. It starts with `ntn_`. Keep it private.
 
 ### Step 2: Create the Notion Databases
 
-Create three full-page table databases in Notion:
+Create four full-page table databases in Notion:
 
 **Global Tokens:**
 
@@ -240,7 +246,7 @@ Create three full-page table databases in Notion:
 |---|---|---|
 | Name | Title | — |
 | Reference | Text | — |
-| Theme | Select | light, dark |
+| Theme | Select | light, dark, typography |
 | Status | Select | synced, modified, error |
 | Last Synced | Date | — |
 | Error | Text | — |
@@ -256,6 +262,19 @@ Create three full-page table databases in Notion:
 | Last Synced | Date | — |
 | Error | Text | — |
 
+**Build Log:**
+
+| Column | Type | Select Options |
+|---|---|---|
+| Timestamp | Title | — |
+| Result | Select | success, failure |
+| Tokens Changed | Number | — |
+| Duration | Text | — |
+| Errors | Text | — |
+| Global | Number | — |
+| Semantic | Number | — |
+| Component | Number | — |
+
 After creating each database, connect the integration: click `...` (top right) → Connections → search for `flintwork-token-sync` → Confirm.
 
 ### Step 3: Get the Database IDs
@@ -266,7 +285,7 @@ Open each database in Notion. Click "Share" → "Copy link." The URL looks like:
 https://www.notion.so/your-workspace/31cc91e6f0c080a4aa0df63bf96bade4?v=...
 ```
 
-The 32-character hex string between the last `/` and `?v=` is the database ID. You need one from each of the three databases.
+The 32-character hex string between the last `/` and `?v=` is the database ID. You need one from each of the four databases.
 
 ### Step 4: Configure the Environment
 
@@ -281,6 +300,7 @@ NOTION_TOKEN=ntn_your_actual_token
 NOTION_GLOBAL_DB=your_32_char_global_db_id
 NOTION_SEMANTIC_DB=your_32_char_semantic_db_id
 NOTION_COMPONENT_DB=your_32_char_component_db_id
+NOTION_BUILD_LOG_DB=your_32_char_build_log_db_id
 FLINTWORK_TOKENS_PATH=../flintwork/src/tokens
 ```
 
@@ -299,7 +319,7 @@ The seed script reads flintwork's existing JSON token files and creates correspo
 npm run cli validate
 ```
 
-Should print: "All 217 tokens are valid."
+Should print: "All 253 tokens are valid."
 
 ```bash
 npm run cli sync
@@ -330,6 +350,7 @@ If the file doesn't exist, create it.
         "NOTION_GLOBAL_DB": "your_global_db_id",
         "NOTION_SEMANTIC_DB": "your_semantic_db_id",
         "NOTION_COMPONENT_DB": "your_component_db_id",
+        "NOTION_BUILD_LOG_DB": "your_build_log_db_id",
         "FLINTWORK_TOKENS_PATH": "/absolute/path/to/flintwork/src/tokens"
       }
     },
@@ -376,28 +397,40 @@ If the designer typos the reference — `{color.blue.999}` (doesn't exist):
 
 ## Testing
 
-30 tests across two test files. All test pure functions in `core/` — no Notion API calls, no MCP dependency.
+59 tests across three test files. All test pure functions in `core/` — no Notion API calls, no MCP dependency.
 
 ```bash
 npm test
 ```
 
-**validate.test.ts — 22 tests:**
+**validate.test.ts:**
 
-- Token name validation (7): valid names, empty, double dots, leading/trailing dots, slashes, hyphens
-- Color validation (8): 3/6/8-digit hex, transparent, none, invalid hex, 5-digit hex, empty
-- Dimension validation (6): px, rem, unitless, none, shadow-as-dimension, invalid
-- Font weight (2): numeric, non-numeric
-- Shadow (2): complex values, none
-- Reference validation (4): valid semantic→global, unresolved, component→semantic, plain values
-- Circular reference detection (2): detected, not detected
-- Token count (1): correct total across tiers
+- Token name validation: valid names, empty, double dots, leading/trailing dots, slashes, hyphens
+- Color validation: 3/6/8-digit hex, transparent, none, invalid hex, 5-digit hex, empty
+- Dimension validation: px, rem, unitless, none, shadow-as-dimension, invalid
+- Font weight: numeric, non-numeric
+- Shadow: complex values, none
+- Reference validation: valid semantic→global, unresolved, component→semantic, plain values, typography raw values
+- Circular reference detection: detected, not detected
+- Token count: correct total across tiers
 
-**generate-json.test.ts — 8 tests:**
+**generate-json.test.ts:**
 
-- Global files (5): colors.json, spacing.json, typography merge, font weight as number, font family as array
-- Semantic files (2): light/dark creation, references stored as strings
-- Component files (1): separate files per component
+- Global files: colors.json, spacing.json, typography merge, font weight as number, font family as array
+- Semantic files: light/dark creation, typography.json creation, three-theme generation, references stored as strings
+- Component files: separate files per component
+- Result counts
+
+**diff.test.ts:**
+
+- No changes: Notion matches disk, missing directories
+- Modified tokens: global value, semantic reference, component reference
+- Added tokens: in Notion but not on disk, alongside existing
+- Removed tokens: on disk but not in Notion
+- Multiple tiers simultaneously
+- Typography semantic tokens
+- Value normalization: arrays to comma-separated, numbers to strings
+- Summary counts
 
 ---
 
@@ -407,19 +440,21 @@ Documented in detail in `docs/decisions/decisions.md`. Summary:
 
 1. **MCP server as primary interface** — not CLI-first with MCP wrapper. The hackathon evaluates MCP usage depth.
 2. **Separate repo from flintwork** — infrastructure tooling, not library code. Only coupling is a file path.
-3. **Three Notion databases** — one per token tier, matching the three-tier architecture.
+3. **Four Notion databases** — three for token tiers (global, semantic, component), one for build audit log.
 4. **Bidirectional sync** — status written back to each Notion row, not just logged to console.
-5. **Optimized write-back** — only update rows whose status changed. Discovered when full 217-row write-back exceeded MCP tool call timeout.
+5. **Optimized write-back** — only update rows whose status changed. Discovered when full 253-row write-back exceeded MCP tool call timeout.
+6. **Diff before sync** — `diff_tokens` lets designers preview what would change before committing. No surprises.
+7. **Build log as audit trail** — every sync recorded in a fourth Notion database. Timestamp, result, token counts, errors.
 
 ---
 
 ## What the Seed Script Does
 
-`npm run seed` reads flintwork's JSON token files and creates Notion rows from them. It's a one-time setup step — you run it once to populate the databases, then the sync tool takes over.
+`npm run seed` reads flintwork's JSON token files and creates Notion rows from them. It's a one-time setup step — you run it once to populate the databases, then the sync tool takes over. A separate `npm run seed:typography` command seeds the 36 typography semantic tokens specifically.
 
-The seed script handles type inference: hex values become "color", px/rem values become "dimension", comma-separated strings become "fontFamily", numbers become "fontWeight". It also handles category inference from file names: `colors.json` → "color", `spacing.json` → "spacing", `typography.json` → inferred per-token from the path (fontSize, fontWeight, fontFamily, lineHeight).
+The seed script handles type inference: hex values become "color", shadow patterns (rgba, commas) are detected before dimension checks to avoid misclassification, comma-separated strings become "fontFamily", numbers become "fontWeight". It also handles category inference from file names: `colors.json` → "color", `spacing.json` → "spacing", `typography.json` → inferred per-token from the path (fontSize, fontWeight, fontFamily, lineHeight).
 
-Rate limiting: Notion allows ~3 requests per second. The seed script waits 350ms between each row creation. For 217 tokens, this takes about 76 seconds.
+Rate limiting: Notion allows ~3 requests per second. The seed script waits 350ms between each row creation. For 253 tokens, this takes about 90 seconds.
 
 ---
 

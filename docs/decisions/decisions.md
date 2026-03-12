@@ -40,13 +40,13 @@ Separate repository. The sync tool is infrastructure tooling that operates ON fl
 
 ---
 
-# ADR-003: Three Notion Databases Mirroring Three Token Tiers
+# ADR-003: Four Notion Databases — Three Token Tiers Plus Audit Log
 
 ## Status
 Accepted
 
 ## Context
-The token system has three tiers: global, semantic, component. The Notion representation needs to map to these tiers.
+The token system has three tiers: global, semantic, component. The Notion representation needs to map to these tiers. Additionally, sync operations need an audit trail.
 
 ## Decision
 Three separate Notion databases, one per tier. Each has tier-specific columns (Global has Value and Type, Semantic has Reference and Theme, Component has Reference and Component).
@@ -74,11 +74,11 @@ Most Notion integrations are unidirectional — read from Notion, do something. 
 After every sync, the tool writes back to each Notion row: `Status` (synced/error), `Last Synced` (timestamp), and `Error` (validation message if failed). The designer sees the result without leaving Notion.
 
 ## Alternatives Considered
-- **Write to a separate Build Log database.** Adds a fourth database that the designer has to check separately. The status on the token row itself is more immediate.
+- **Build Log only, no per-row status.** The designer would have to check a separate table to see if their token synced. The status on the token row itself is more immediate. We later added a Build Log database as well (ADR-007) — the two are complementary, not alternatives.
 - **No write-back — just CLI output.** The designer never sees the result unless someone tells them. Defeats the purpose of Notion as the interface.
 
 ## Consequences
-- The sync only writes back to rows whose status actually changed — tokens already marked "synced" are skipped. This was discovered when the initial implementation tried to update all 217 rows (~76 seconds at 350ms/row), which exceeded Claude Desktop's MCP tool call timeout. The optimization means a typical sync (one token changed) writes back 1 row instead of 217.
+- The sync only writes back to rows whose status actually changed — tokens already marked "synced" are skipped. This was discovered when the initial implementation tried to update all 253 rows (~76 seconds at 350ms/row), which exceeded Claude Desktop's MCP tool call timeout. The optimization means a typical sync (one token changed) writes back 1 row instead of 253.
 - Validation errors are written to the Error column of the specific token that failed — the designer sees exactly which token has the problem and what's wrong.
 
 ---
@@ -89,10 +89,10 @@ After every sync, the tool writes back to each Notion row: `Status` (synced/erro
 Accepted
 
 ## Context
-The initial implementation wrote "synced" status to every Notion row on every sync — all 217 tokens. At 350ms per row (Notion's rate limit), this took ~76 seconds. Claude Desktop's MCP tool calls have a timeout shorter than this, causing the sync to silently fail when invoked via MCP.
+The initial implementation wrote "synced" status to every Notion row on every sync — all 253 tokens. At 350ms per row (Notion's rate limit), this took ~76 seconds. Claude Desktop's MCP tool calls have a timeout shorter than this, causing the sync to silently fail when invoked via MCP.
 
 ## Decision
-`writeSyncSuccess` filters tokens by status before writing. Only rows where `status !== 'synced'` are updated. A typical sync after one designer edit writes back 1 row, not 217.
+`writeSyncSuccess` filters tokens by status before writing. Only rows where `status !== 'synced'` are updated. A typical sync after one designer edit writes back 1 row, not 253.
 
 ## Alternatives Considered
 - **Increase the rate limit delay.** Would make the problem worse, not better.
@@ -104,3 +104,48 @@ The initial implementation wrote "synced" status to every Notion row on every sy
 - Sync after one designer edit writes 1 row — ~350ms.
 - Sync after validation failure writes only the errored rows.
 - The CLI is unaffected — it had no timeout constraint — but benefits from the same optimization.
+
+---
+
+# ADR-006: Diff Tool — Preview Changes Before Sync
+
+## Status
+Accepted
+
+## Context
+A designer changes a token and immediately syncs. If the change was wrong, the JSON files and CSS are already overwritten. There was no way to preview what would change before committing.
+
+## Decision
+Added `diff_tokens` tool that reads current Notion state, reads existing JSON files from disk, and compares them. Returns a structured list of added, removed, and modified tokens with before/after values. Available as both MCP tool and CLI command.
+
+## Alternatives Considered
+- **Dry-run flag on sync_tokens.** Would add complexity to the sync function (conditional writes, conditional build). A separate diff tool is simpler and composable — run diff, review, then sync.
+- **Git diff after sync.** Only works if the files are in a git repo and the user knows how to read git diffs. The diff tool provides structured output that Claude can interpret and summarize.
+
+## Consequences
+- The designer workflow becomes: edit → diff → sync, not just edit → sync.
+- Value normalization was required — JSON files store arrays (`["Inter", "system-ui"]`) and numbers (`500`), but Notion stores everything as strings. The diff normalizes both sides before comparing.
+- The diff tool reads files from disk, so it has a filesystem dependency. All other tools (validate, summary) are Notion-only.
+
+---
+
+# ADR-007: Build Log Database — Sync Audit Trail
+
+## Status
+Accepted
+
+## Context
+After multiple syncs, there was no history of what happened. A designer asking "did my change sync yesterday?" had no way to check without asking the developer.
+
+## Decision
+Added a fourth Notion database (Build Log) that records one row per sync: timestamp, result (success/failure), tokens changed count, duration, error summary, and per-tier token counts. The sync function writes a build log entry on every exit path — validation failure, build failure, and success.
+
+## Alternatives Considered
+- **Log file on disk.** Not visible to designers. Defeats the "Notion is the interface" principle.
+- **Comments on token rows.** Pollutes the token databases with sync metadata. Build history is a separate concern.
+- **Only log failures.** Successes are just as important — "yes, your change synced at 2:30 PM" is valuable confirmation.
+
+## Consequences
+- Every sync now makes one additional Notion API call (creating the build log row). At 350ms, this is negligible.
+- The Build Log grows unbounded. For a design system with a few syncs per day, this is not a concern for years. If it becomes one, old entries can be archived.
+- The `SyncConfig` type now requires a `buildLogDbId` field. All entry points (MCP server, CLI) must provide it.
