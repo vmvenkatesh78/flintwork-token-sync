@@ -3,6 +3,7 @@ import { createNotionClient } from '../core/notion-client.js';
 import { validateTokens } from '../core/validate.js';
 import { runTokenBuild } from '../core/build.js';
 import { sync, readAllTokens } from '../core/sync.js';
+import { diffTokens } from '../core/diff.js';
 import type { SyncConfig } from '../core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -12,12 +13,13 @@ import type { SyncConfig } from '../core/types.js';
 /**
  * Creates and configures the MCP server with all token sync tools.
  *
- * Four tools exposed to Claude:
+ * Five tools exposed to Claude:
  *
  * 1. `sync_tokens`          — full pipeline via shared sync()
  * 2. `validate_tokens`      — read + validate, no file generation
  * 3. `build_tokens`         — run build on existing JSON files
  * 4. `get_token_summary`    — read current state from Notion
+ * 5. `diff_tokens`          — compare Notion state against JSON on disk
  */
 export function createMcpServer(config: SyncConfig): McpServer {
   const server = new McpServer({
@@ -218,6 +220,74 @@ export function createMcpServer(config: SyncConfig): McpServer {
           content: [{
             type: 'text' as const,
             text: `Failed to read token summary: ${message}`,
+          }],
+        };
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // Tool 5: diff_tokens — compare Notion state against disk
+  // -----------------------------------------------------------------------
+
+  server.tool(
+    'diff_tokens',
+    'Compares current Notion token state against the JSON files on disk. Shows what would change if you sync: added tokens, removed tokens, and modified values. Use this to preview changes before running a full sync.',
+    {},
+    async () => {
+      try {
+        const tokens = await readAllTokens(notion, config);
+        const diff = diffTokens(
+          tokens.global,
+          tokens.semantic,
+          tokens.component,
+          config.flintworkTokensPath,
+        );
+
+        if (diff.changes.length === 0) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `No differences found. Notion and disk are in sync (${diff.total} tokens compared).`,
+            }],
+          };
+        }
+
+        const lines = [
+          `Token Diff: ${diff.changes.length} change(s) found`,
+          ``,
+          `  Added:     ${diff.added}`,
+          `  Removed:   ${diff.removed}`,
+          `  Modified:  ${diff.modified}`,
+          `  Unchanged: ${diff.unchanged}`,
+          ``,
+        ];
+
+        for (const change of diff.changes) {
+          const tag = change.change.toUpperCase().padEnd(8);
+          const tier = `[${change.tier}]`.padEnd(12);
+
+          if (change.change === 'added') {
+            lines.push(`  ${tag} ${tier} ${change.name}: ${change.after}`);
+          } else if (change.change === 'removed') {
+            lines.push(`  ${tag} ${tier} ${change.name}: ${change.before}`);
+          } else {
+            lines.push(`  ${tag} ${tier} ${change.name}: ${change.before} → ${change.after}`);
+          }
+        }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: lines.join('\n'),
+          }],
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Diff failed with error: ${message}`,
           }],
         };
       }

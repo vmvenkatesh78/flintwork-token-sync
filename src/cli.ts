@@ -1,8 +1,9 @@
 import { config as loadEnv } from 'dotenv';
-import { createNotionClient, readGlobalTokens, readSemanticTokens, readComponentTokens } from './core/notion-client.js';
+import { createNotionClient } from './core/notion-client.js';
 import { validateTokens } from './core/validate.js';
 import { runTokenBuild } from './core/build.js';
 import { sync, readAllTokens } from './core/sync.js';
+import { diffTokens } from './core/diff.js';
 import type { SyncConfig } from './core/types.js';
 
 // ---------------------------------------------------------------------------
@@ -95,6 +96,51 @@ async function commandSync(): Promise<void> {
   console.log(`\n🔗 Token sync complete.\n`);
 }
 
+async function commandDiff(): Promise<void> {
+  const notion = createNotionClient(config.notionToken);
+
+  console.log('Reading tokens from Notion...');
+  const tokens = await readAllTokens(notion, config);
+
+  console.log(`  Global:    ${tokens.global.length}`);
+  console.log(`  Semantic:  ${tokens.semantic.length}`);
+  console.log(`  Component: ${tokens.component.length}`);
+
+  console.log('\nComparing against disk...');
+  const diff = diffTokens(
+    tokens.global,
+    tokens.semantic,
+    tokens.component,
+    config.flintworkTokensPath,
+  );
+
+  if (diff.changes.length === 0) {
+    console.log(`\n  ✓ No differences. Notion and disk are in sync (${diff.total} tokens).\n`);
+    return;
+  }
+
+  console.log(`\n  ${diff.changes.length} change(s) found:\n`);
+  console.log(`    Added:     ${diff.added}`);
+  console.log(`    Removed:   ${diff.removed}`);
+  console.log(`    Modified:  ${diff.modified}`);
+  console.log(`    Unchanged: ${diff.unchanged}`);
+  console.log('');
+
+  for (const change of diff.changes) {
+    const tag = change.change.toUpperCase().padEnd(8);
+    const tier = `[${change.tier}]`.padEnd(12);
+
+    if (change.change === 'added') {
+      console.log(`    ${tag} ${tier} ${change.name}: ${change.after}`);
+    } else if (change.change === 'removed') {
+      console.log(`    ${tag} ${tier} ${change.name}: ${change.before}`);
+    } else {
+      console.log(`    ${tag} ${tier} ${change.name}: ${change.before} → ${change.after}`);
+    }
+  }
+  console.log('');
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -114,9 +160,12 @@ async function main(): Promise<void> {
     case 'sync':
       await commandSync();
       break;
+    case 'diff':
+      await commandDiff();
+      break;
     default:
       console.error(`Unknown command: ${command}`);
-      console.error('Usage: flintwork-token-sync [sync|validate|build]');
+      console.error('Usage: flintwork-token-sync [sync|validate|build|diff]');
       process.exit(1);
   }
 }
