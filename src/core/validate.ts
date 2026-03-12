@@ -62,7 +62,15 @@ function validateGlobalValue(token: GlobalToken): ValidationError | null {
     case 'dimension':
       // Accepts: "16px", "1.5rem", "0px", "none", unitless numbers like
       // "1.25" (valid for line-height), and complex multi-part values
-      // (shadow values may be categorized as dimension during seeding).
+      // containing rgba/rgb (shadow values may be categorized as dimension
+      // during seeding due to the "px" substring matching first).
+      //
+      // Known limitation: any string containing "rgba" or "rgb" passes.
+      // A value like "rgb broken" would not be caught. The proper fix is
+      // separating shadow validation from dimension validation entirely,
+      // but this requires the seed script to correctly categorize all
+      // shadow tokens as type "shadow" — which it now does for new seeds.
+      // Legacy seeded data may still have shadows typed as "dimension".
       if (
         !DIMENSION.test(value) &&
         !NUMBER_VALUE.test(value) &&

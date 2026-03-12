@@ -158,19 +158,39 @@ export async function sync(notion: Client, config: SyncConfig): Promise<SyncResu
       statusUpdates: updatedCount,
     };
 
-    // Write build log
+    // 6. Write build log
     await writeBuildLog(notion, config.buildLogDbId, buildLogEntryFromResult(result));
 
     return result;
   }
 
   // 3. Generate JSON files
-  const generated = generateTokenFiles(
-    tokens.global,
-    tokens.semantic,
-    tokens.component,
-    config.flintworkTokensPath,
-  );
+  let generated;
+  try {
+    generated = generateTokenFiles(
+      tokens.global,
+      tokens.semantic,
+      tokens.component,
+      config.flintworkTokensPath,
+    );
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'File generation failed';
+    const result: SyncResult = {
+      success: false,
+      globalCount: tokens.global.length,
+      semanticCount: tokens.semantic.length,
+      componentCount: tokens.component.length,
+      totalTokens: tokens.totalTokens,
+      validationErrors: [],
+      buildOutput: `JSON generation failed: ${errorMessage}`,
+      timestamp,
+      statusUpdates: 0,
+    };
+
+    await writeBuildLog(notion, config.buildLogDbId, buildLogEntryFromResult(result));
+
+    return result;
+  }
 
   // 4. Build
   const build = runTokenBuild(config.flintworkTokensPath);

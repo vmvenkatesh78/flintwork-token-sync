@@ -137,22 +137,25 @@ function readComponentFromDisk(tokensPath: string, component: string): Map<strin
 // ---------------------------------------------------------------------------
 
 /**
- * Compares two maps and returns the differences.
+ * Compares two maps and returns the differences plus unchanged count.
  */
 function diffMaps(
   disk: Map<string, string>,
   notion: Map<string, string>,
   tier: TokenChange['tier'],
-): TokenChange[] {
+): { changes: TokenChange[]; unchanged: number } {
   const changes: TokenChange[] = [];
+  let unchanged = 0;
 
-  // Modified or unchanged (in both)
+  // Check disk tokens against Notion
   for (const [name, diskValue] of disk) {
     const notionValue = notion.get(name);
     if (notionValue === undefined) {
       changes.push({ name, tier, change: 'removed', before: diskValue });
     } else if (diskValue !== notionValue) {
       changes.push({ name, tier, change: 'modified', before: diskValue, after: notionValue });
+    } else {
+      unchanged++;
     }
   }
 
@@ -163,7 +166,7 @@ function diffMaps(
     }
   }
 
-  return changes;
+  return { changes, unchanged };
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +189,7 @@ export function diffTokens(
   tokensPath: string,
 ): DiffResult {
   const changes: TokenChange[] = [];
+  let unchangedCount = 0;
 
   // --- Global tokens ---
   const globalDisk = readGlobalFromDisk(tokensPath);
@@ -193,7 +197,9 @@ export function diffTokens(
   for (const token of global) {
     globalNotion.set(token.name, token.value);
   }
-  changes.push(...diffMaps(globalDisk, globalNotion, 'global'));
+  const globalDiff = diffMaps(globalDisk, globalNotion, 'global');
+  changes.push(...globalDiff.changes);
+  unchangedCount += globalDiff.unchanged;
 
   // --- Semantic tokens (per theme) ---
   const semanticByTheme = new Map<string, SemanticToken[]>();
@@ -219,7 +225,9 @@ export function diffTokens(
     for (const token of semanticByTheme.get(theme) ?? []) {
       notion.set(token.name, token.reference);
     }
-    changes.push(...diffMaps(disk, notion, 'semantic'));
+    const themeDiff = diffMaps(disk, notion, 'semantic');
+    changes.push(...themeDiff.changes);
+    unchangedCount += themeDiff.unchanged;
   }
 
   // --- Component tokens (per component) ---
@@ -245,7 +253,9 @@ export function diffTokens(
     for (const token of componentByName.get(comp) ?? []) {
       notion.set(token.name, token.reference);
     }
-    changes.push(...diffMaps(disk, notion, 'component'));
+    const compDiff = diffMaps(disk, notion, 'component');
+    changes.push(...compDiff.changes);
+    unchangedCount += compDiff.unchanged;
   }
 
   // --- Summarize ---
@@ -253,14 +263,13 @@ export function diffTokens(
   const removed = changes.filter((c) => c.change === 'removed').length;
   const modified = changes.filter((c) => c.change === 'modified').length;
   const totalCompared = global.length + semantic.length + component.length;
-  const unchanged = totalCompared - added - modified;
 
   return {
     changes,
     added,
     removed,
     modified,
-    unchanged: Math.max(0, unchanged),
+    unchanged: unchangedCount,
     total: totalCompared,
   };
 }
