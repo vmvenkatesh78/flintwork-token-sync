@@ -24,6 +24,7 @@ const syncConfig: SyncConfig = {
   globalDbId: requireEnv('NOTION_GLOBAL_DB'),
   semanticDbId: requireEnv('NOTION_SEMANTIC_DB'),
   componentDbId: requireEnv('NOTION_COMPONENT_DB'),
+  buildLogDbId: requireEnv('NOTION_BUILD_LOG_DB'),
   flintworkTokensPath: process.env['FLINTWORK_TOKENS_PATH'] ?? '../flintwork/src/tokens',
 };
 

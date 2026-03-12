@@ -88,5 +88,6 @@ export interface SyncConfig {
   globalDbId: string;
   semanticDbId: string;
   componentDbId: string;
+  buildLogDbId: string;
   flintworkTokensPath: string;
 }

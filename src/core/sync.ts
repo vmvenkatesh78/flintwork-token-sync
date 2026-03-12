@@ -8,6 +8,7 @@ import {
 import { validateTokens } from './validate.js';
 import { generateTokenFiles } from './generate-json.js';
 import { runTokenBuild } from './build.js';
+import { writeBuildLog, buildLogEntryFromResult } from './build-log.js';
 import type {
   SyncConfig,
   SyncResult,
@@ -128,6 +129,7 @@ async function writeSyncSuccess(
  * 3. Generate JSON files for flintwork
  * 4. Run flintwork's token build
  * 5. Write status back to Notion
+ * 6. Write build log entry
  *
  * This is the single source of truth for the sync pipeline.
  * Both the MCP server and CLI call this function.
@@ -144,7 +146,7 @@ export async function sync(notion: Client, config: SyncConfig): Promise<SyncResu
   if (!validation.valid) {
     const updatedCount = await writeValidationErrors(notion, tokens, validation, timestamp);
 
-    return {
+    const result: SyncResult = {
       success: false,
       globalCount: tokens.global.length,
       semanticCount: tokens.semantic.length,
@@ -155,6 +157,11 @@ export async function sync(notion: Client, config: SyncConfig): Promise<SyncResu
       timestamp,
       statusUpdates: updatedCount,
     };
+
+    // Write build log
+    await writeBuildLog(notion, config.buildLogDbId, buildLogEntryFromResult(result));
+
+    return result;
   }
 
   // 3. Generate JSON files
@@ -169,7 +176,7 @@ export async function sync(notion: Client, config: SyncConfig): Promise<SyncResu
   const build = runTokenBuild(config.flintworkTokensPath);
 
   if (!build.success) {
-    return {
+    const result: SyncResult = {
       success: false,
       globalCount: tokens.global.length,
       semanticCount: tokens.semantic.length,
@@ -180,12 +187,16 @@ export async function sync(notion: Client, config: SyncConfig): Promise<SyncResu
       timestamp,
       statusUpdates: 0,
     };
+
+    await writeBuildLog(notion, config.buildLogDbId, buildLogEntryFromResult(result));
+
+    return result;
   }
 
   // 5. Write success status
   const updatedCount = await writeSyncSuccess(notion, tokens, timestamp);
 
-  return {
+  const result: SyncResult = {
     success: true,
     globalCount: tokens.global.length,
     semanticCount: tokens.semantic.length,
@@ -196,4 +207,9 @@ export async function sync(notion: Client, config: SyncConfig): Promise<SyncResu
     timestamp,
     statusUpdates: updatedCount,
   };
+
+  // Write build log
+  await writeBuildLog(notion, config.buildLogDbId, buildLogEntryFromResult(result));
+
+  return result;
 }
